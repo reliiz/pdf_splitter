@@ -2,18 +2,20 @@
 
 指定したページ番号で PDF を分割するシンプルな Python ツールです。
 
+※ `python` コマンドが無い環境では、README の例のとおり `python3` を使用してください。
+
 ## セットアップ
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 ```
 
 ## 使い方
 
 ```bash
-python pdf_splitter.py sample.pdf --split-at 3,5,10 --output-dir out
+python3 pdf_splitter.py sample.pdf --split-at 3,5,10 --output-dir out
 ```
 
 - `--split-at` は **各分割ファイルの終端ページ番号（1始まり）** をカンマ区切りで指定します。
@@ -26,7 +28,7 @@ python pdf_splitter.py sample.pdf --split-at 3,5,10 --output-dir out
 ### 境界ページを重複させる場合
 
 ```bash
-python pdf_splitter.py sample.pdf --split-at 3,5,10 --overlap-boundary
+python3 pdf_splitter.py sample.pdf --split-at 3,5,10 --overlap-boundary
 ```
 
 - `--overlap-boundary` を付けると、境界ページを前後のファイルで重複して含めます。
