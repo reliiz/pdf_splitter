@@ -2,7 +2,7 @@
 """Split a PDF file at user-specified page numbers.
 
 Example:
-    python pdf_splitter.py input.pdf --split-at 3,5,10
+    python3 pdf_splitter.py input.pdf --split-at 3,5,10
 
 The command above creates the following files:
     input_part1.pdf  (pages 1-3)
@@ -128,7 +128,7 @@ def main() -> None:
         from pypdf import PdfReader
     except ModuleNotFoundError:
         parser.error(
-            "pypdf がインストールされていません。`pip install -r requirements.txt` を実行してください"
+            "pypdf がインストールされていません。`python3 -m pip install -r requirements.txt` を実行してください"
         )
 
     reader = PdfReader(str(input_path))
