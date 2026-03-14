@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""GUI app for splitting PDFs with drag & drop and page preview."""
+"""GUI app for splitting PDFs with optional drag & drop and page preview."""
 
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 from pdf_splitter import split_pdf
 
@@ -21,21 +23,32 @@ def parse_drop_files(raw: str) -> list[Path]:
     return files
 
 
+def can_import_tkinterdnd2() -> bool:
+    """Check tkinterdnd2 import in a subprocess to avoid crashing this process."""
+    probe = subprocess.run(
+        [sys.executable, "-c", "import tkinterdnd2"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return probe.returncode == 0
+
+
 class PdfSplitterGui:
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: tk.Misc, dnd_enabled: bool = False) -> None:
         self.root = root
         self.root.title("PDF Splitter GUI")
         self.root.geometry("900x680")
 
         self.pdf_path: Path | None = None
+        self.reader = None
         self.total_pages = 0
         self.current_page = 1
         self.split_points: set[int] = set()
-        self.preview_photo = None
-        self.pdf_doc = None
 
         self.output_dir = tk.StringVar(value=str(Path.cwd()))
         self.overlap_boundary = tk.BooleanVar(value=False)
+        self.dnd_enabled = dnd_enabled
 
         self._build_ui()
 
@@ -76,8 +89,9 @@ class PdfSplitterGui:
         self.page_info = ttk.Label(nav_row, text="ページ: -")
         self.page_info.pack(side="left", padx=12)
 
-        self.preview_canvas = tk.Canvas(preview_frame, bg="#f3f3f3", height=340)
-        self.preview_canvas.pack(fill="both", expand=True, pady=8)
+        self.preview_text = scrolledtext.ScrolledText(preview_frame, height=16, wrap="word")
+        self.preview_text.pack(fill="both", expand=True, pady=8)
+        self.preview_text.configure(state="disabled")
 
         split_row = ttk.Frame(preview_frame)
         split_row.pack(fill="x")
@@ -107,14 +121,16 @@ class PdfSplitterGui:
         ttk.Button(top, text="分割を実行", command=self.run_split).pack(fill="x", pady=(12, 0))
 
     def _bind_drop_events(self) -> None:
-        try:
-            from tkinterdnd2 import DND_FILES, TkinterDnD  # type: ignore
-        except ModuleNotFoundError:
-            self.drop_label.configure(text="ドラッグ&ドロップを使うには tkinterdnd2 が必要です。下のボタンで選択できます。")
+        if not self.dnd_enabled:
+            self.drop_label.configure(
+                text=(
+                    "ドラッグ&ドロップは現在の環境で無効です（tkinterdnd2の互換性問題）。"
+                    " 下のボタンでPDFを選択してください。"
+                )
+            )
             return
 
-        if not isinstance(self.root, TkinterDnD.Tk):
-            return
+        from tkinterdnd2 import DND_FILES  # type: ignore
 
         self.drop_label.drop_target_register(DND_FILES)
         self.drop_label.dnd_bind("<<Drop>>", self.on_drop)
@@ -126,14 +142,14 @@ class PdfSplitterGui:
 
     def reset_selection(self) -> None:
         self.pdf_path = None
+        self.reader = None
         self.total_pages = 0
         self.current_page = 1
         self.split_points.clear()
         self.file_label.configure(text="未選択")
         self.split_list.delete(0, tk.END)
         self.page_info.configure(text="ページ: -")
-        self.preview_canvas.delete("all")
-        self._close_doc()
+        self._set_preview_text("")
 
     def on_drop(self, event) -> None:  # type: ignore[no-untyped-def]
         files = parse_drop_files(event.data)
@@ -150,64 +166,53 @@ class PdfSplitterGui:
             messagebox.showerror("エラー", f"ファイルが見つかりません: {path}")
             return
 
-        self._close_doc()
         try:
             from pypdf import PdfReader
-            import pypdfium2 as pdfium
-        except ModuleNotFoundError as exc:
-            messagebox.showerror(
-                "依存不足",
-                "必要な依存関係が不足しています。\n"
-                "python3 -m pip install -r requirements.txt\n"
-                f"({exc})",
-            )
-            return
 
-        try:
             reader = PdfReader(str(path))
-            self.total_pages = len(reader.pages)
-            self.pdf_doc = pdfium.PdfDocument(str(path))
+            total_pages = len(reader.pages)
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("エラー", f"PDFの読み込みに失敗しました:\n{exc}")
             return
 
-        if self.total_pages < 2:
+        if total_pages < 2:
             messagebox.showerror("エラー", "2ページ以上のPDFを指定してください。")
-            self._close_doc()
             return
 
         self.pdf_path = path
+        self.reader = reader
+        self.total_pages = total_pages
         self.current_page = 1
         self.split_points.clear()
         self.file_label.configure(text=f"読み込み: {path}")
         self.refresh_split_list()
         self.show_page(1)
 
-    def _close_doc(self) -> None:
-        self.pdf_doc = None
-
     def show_page(self, page_number: int) -> None:
-        if not self.pdf_doc or self.total_pages == 0:
+        if not self.reader or self.total_pages == 0:
             return
+
         page_number = max(1, min(self.total_pages, page_number))
         self.current_page = page_number
 
         try:
-            from PIL import Image, ImageTk
-
-            page = self.pdf_doc.get_page(page_number - 1)
-            pil_image = page.render(scale=0.8).to_pil()
-            page.close()
-            max_w, max_h = 820, 330
-            pil_image.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
-            self.preview_photo = ImageTk.PhotoImage(pil_image)
+            page = self.reader.pages[page_number - 1]
+            extracted = page.extract_text() or "(このページはテキスト抽出できません。画像PDFの可能性があります)"
         except Exception as exc:  # noqa: BLE001
-            messagebox.showerror("エラー", f"プレビュー生成に失敗しました:\n{exc}")
-            return
+            extracted = f"プレビュー読み込みエラー: {exc}"
 
-        self.preview_canvas.delete("all")
-        self.preview_canvas.create_image(410, 170, image=self.preview_photo)
+        preview = (
+            f"=== ページ {page_number} / {self.total_pages} ===\n\n"
+            f"{extracted[:2500]}"
+        )
+        self._set_preview_text(preview)
         self.page_info.configure(text=f"ページ: {self.current_page} / {self.total_pages}")
+
+    def _set_preview_text(self, text: str) -> None:
+        self.preview_text.configure(state="normal")
+        self.preview_text.delete("1.0", tk.END)
+        self.preview_text.insert("1.0", text)
+        self.preview_text.configure(state="disabled")
 
     def prev_page(self) -> None:
         self.show_page(self.current_page - 1)
@@ -268,13 +273,16 @@ class PdfSplitterGui:
 
 
 def main() -> None:
-    try:
+    dnd_enabled = can_import_tkinterdnd2()
+
+    if dnd_enabled:
         from tkinterdnd2 import TkinterDnD  # type: ignore
 
-        root = TkinterDnD.Tk()
-    except ModuleNotFoundError:
+        root: tk.Misc = TkinterDnD.Tk()
+    else:
         root = tk.Tk()
-    app = PdfSplitterGui(root)
+
+    PdfSplitterGui(root, dnd_enabled=dnd_enabled)
     root.mainloop()
 
 
